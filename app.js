@@ -301,7 +301,7 @@
     SPLIT.islands.forEach(walk);
     return b;
   })();
-  var SCS_W = 6.6;                                          // 示意框 geo 宽度（经度跨度）
+  var SCS_W = 7.6;                                          // 示意框 geo 宽度（经度跨度）
   var SCS_H = +(SCS_W * (SCS_BB.y1 - SCS_BB.y0) / (SCS_BB.x1 - SCS_BB.x0)).toFixed(2);
   var SCS_AREA = { left: 126.2, top: 18.6, width: SCS_W, height: SCS_H };
 
@@ -339,8 +339,14 @@
      「岛礁包围盒内的比例」线性内插即可精确落位。 */
   function scsBoxPx() {
     if (!mapChart.convertToPixel) return null;
-    var p1 = mapChart.convertToPixel({ seriesIndex: 0 }, [SCS_AREA.left, SCS_AREA.top]);
-    var p2 = mapChart.convertToPixel({ seriesIndex: 0 }, [SCS_AREA.left + SCS_AREA.width, SCS_AREA.top + SCS_AREA.height]);
+    var p1, p2;
+    /* 首次渲染时坐标系尚未建立，convertToPixel 内部会直接抛
+       TypeError: Cannot read properties of undefined (reading 'queryComponents')，
+       不是返回 null——必须 try/catch，否则会中断 renderMap、地图根本渲不出来。 */
+    try {
+      p1 = mapChart.convertToPixel({ seriesIndex: 0 }, [SCS_AREA.left, SCS_AREA.top]);
+      p2 = mapChart.convertToPixel({ seriesIndex: 0 }, [SCS_AREA.left + SCS_AREA.width, SCS_AREA.top + SCS_AREA.height]);
+    } catch (e) { return null; }
     if (!p1 || !p2 || isNaN(p1[0]) || isNaN(p2[0])) return null;
     return {
       x0: Math.min(p1[0], p2[0]), y0: Math.min(p1[1], p2[1]),
@@ -348,43 +354,58 @@
     };
   }
 
-  /* 附图内的岛礁名称：先给经纬度，渲染时换算成示意框内的像素位置，随框等比缩放。
-     统一左对齐（textAlign: 'left'），锚点即文字左边界，不受文字包围盒宽度影响。 */
-  var SCS_LABELS = [
-    { t: '东沙群岛', lon: 117.2, lat: 21.4 },
-    { t: '西沙群岛', lon: 109.0, lat: 14.2 },
-    { t: '中沙群岛', lon: 114.9, lat: 13.6 },
-    { t: '南沙群岛', lon: 108.8, lat: 10.6 },
-    { t: '曾母暗沙', lon: 108.9, lat: 5.6 }
-  ];
-
-  /* 虚线示意框 + 「南海诸岛」标题 + 岛礁名称，全部随主图联动 */
+  /* 虚线示意框 + 「南海诸岛」标题，全部随主图联动。
+     框内不再逐个标注东沙 / 西沙 / 中沙 / 南沙群岛与曾母暗沙（用户要求，2026-10-19）。 */
   function scsOverlayGraphics() {
     var bx = scsBoxPx();
     if (!bx) return [];
     var bw = bx.x1 - bx.x0, bh = bx.y1 - bx.y0;
-    var fs = Math.max(8, Math.round(bw * 0.078));
-    var g = [{
+    /* 只保留虚线示意框本身：框下原「南海诸岛」标题已按用户要求去掉（2026-10-19） */
+    return [{
       type: 'rect', z: 1, silent: true,
       left: bx.x0, top: bx.y0,
       shape: { width: bw, height: bh },
       style: { fill: '#f8fafc', stroke: '#94a3b8', lineWidth: 1, lineDash: [4, 3] }
-    }, {
-      type: 'text', z: 6, silent: true,
-      right: ((mapChart.getWidth && mapChart.getWidth()) || 900) - bx.x1, top: bx.y1 + 5,
-      style: { text: '南海诸岛', fill: '#475569', font: '600 ' + fs + 'px "PingFang SC", "Microsoft YaHei", sans-serif', textAlign: 'right' }
     }];
-    SCS_LABELS.forEach(function (L) {
-      var fx = (L.lon - SCS_BB.x0) / (SCS_BB.x1 - SCS_BB.x0);
-      var fy = (SCS_BB.y1 - L.lat) / (SCS_BB.y1 - SCS_BB.y0);
+  }
+
+  /* 城市级客户在地图上的独立标注（如「深圳」）：这些城市在地图上属于某个省级
+     region，无法单独作为一个 region 着色，但又是我们对接中的重要城市，需要
+     单独亮出来。做法：在地图坐标上叠一个黄色圆点 + 城市名文字，用 convertToPixel
+     反算像素位置，随主图缩放 / 平移 / resize 联动，始终显示。 */
+  var CITY_POINTS = [
+    { name: '深圳', lon: 114.06, lat: 22.55, status: 'negotiating' }
+  ];
+  function cityOverlayGraphics() {
+    if (!mapChart.convertToPixel) return [];
+    var g = [];
+    CITY_POINTS.forEach(function (c) {
+      var px;
+      try { px = mapChart.convertToPixel({ seriesIndex: 0 }, [c.lon, c.lat]); }
+      catch (e) { return; }
+      if (!px || isNaN(px[0]) || isNaN(px[1])) return;
+      var meta = D.STATUS_META[c.status];
+      var x = px[0], y = px[1];
+      /* 图例筛选时与省份行为一致：本状态未被选中 → 变灰 */
+      var dimmed = anyChip() && !chipSel[c.status];
+      var dotColor = dimmed ? '#f1f5f9' : meta.color;
+      var txtColor = dimmed ? '#94a3b8' : '#7a5b00';
+      /* 黄色实心圆 + 白描边，点上是「深圳」二字（黄底黑字，同图例色系） */
+      g.push({
+        type: 'circle', z: 5, silent: true,
+        shape: { cx: x, cy: y, r: 5 },
+        style: { fill: dotColor, stroke: '#fff', lineWidth: 2, shadowBlur: 4, shadowColor: 'rgba(15,23,42,.35)' }
+      });
       g.push({
         type: 'text', z: 6, silent: true,
-        left: Math.round(bx.x0 + fx * bw),
-        top: Math.round(bx.y0 + fy * bh),
+        left: x + 9, top: y - 9,
         style: {
-          text: L.t, fill: '#475569',
-          font: fs + 'px "PingFang SC", "Microsoft YaHei", sans-serif',
-          textAlign: 'left', textVerticalAlign: 'middle'
+          text: c.name, fill: txtColor,
+          font: '600 13px "PingFang SC", "Microsoft YaHei", sans-serif',
+          textAlign: 'left', textVerticalAlign: 'middle',
+          /* 注意：graphic text 的 textBorder 在本版本会画出一个包围盒矩形框（不是逐字描边），
+             靠它提可读性会在地图上多出一个白色空心框——改用 textShadow。 */
+          textShadowColor: 'rgba(255,255,255,.95)', textShadowBlur: 4
         }
       });
     });
@@ -464,23 +485,28 @@
     /* 南海诸岛是主图 series 里的一个 region：随海南省的接入状态着色（同色加深）。
        事件量模式下 visualMap 会覆盖 data item 的显式颜色，用 value = -1（不落任何区间）
        + visualMap.outOfRange 指定加深色，保证岛礁在白底示意框里始终清晰。 */
-    var scsBase = shade(scsColor(), -0.28);
+    var scsBase = scsInk();
     items.push({
       name: '南海诸岛',
       value: mapMode === 'volume' ? -1 : 0,
-      itemStyle: { areaColor: scsBase, borderColor: scsBase, borderWidth: 0 },
+      /* 九段线是细长多边形、岛礁只有 1–2px，纯填充会断断续续看不见；
+         补一圈同色描边（0.9px）等于整体加粗：线连贯、小岛成实心块。 */
+      itemStyle: { areaColor: scsBase, borderColor: scsBase, borderWidth: 0.9 },
       label: { show: false },
       emphasis: { label: { show: false } }
     });
     return items;
   }
 
-  /* 南海诸岛附图配色：归海南省管辖，随海南当前的接入状态走 */
+  /* 南海诸岛配色：归海南省管辖，随海南当前的接入状态走。
+     岛礁与九段线只有 1–2px，浅色填充在浅灰框底上基本看不见，
+     统一做「同色加深 50%」——保持与图例同色系，但压得足够深才看得清。 */
   function scsColor() {
     if (!HAINAN) return C_NO;
     if (!activeGeo(HAINAN)) return '#f1f5f9';
     return (mapMode === 'status') ? D.STATUS_META[HAINAN.status].color : C_NO;
   }
+  function scsInk() { return shade(scsColor(), -0.5); }
 
   function renderMap() {
     var opt = {
@@ -526,20 +552,20 @@
       opt.series[0].itemStyle = { borderColor: '#ffffff', borderWidth: 0.7 };
       opt.visualMap = {
         type: 'piecewise', pieces: VOL_PIECES, seriesIndex: 0,
-        outOfRange: { color: shade(scsColor(), -0.28) },   // 南海诸岛 value=-1 专属色
+        outOfRange: { color: scsInk() },   // 南海诸岛 value=-1 专属色
         left: 16, bottom: 10, orient: 'horizontal',
         itemWidth: 14, itemHeight: 10, itemGap: 6, textStyle: { fontSize: 11, color: '#475569' }
       };
     }
     mapChart.setOption(opt, true);
     /* 首次渲染时坐标系尚未建立、convertToPixel 拿不到值，setOption 之后再刷一次覆盖层 */
-    var ov = scsOverlayGraphics();
+    var ov = scsOverlayGraphics().concat(cityOverlayGraphics());
     if (ov.length) mapChart.setOption({ graphic: ov });
   }
 
   /* 拖拽 / 缩放主图后，示意框与标注跟着 geo 坐标重新反算像素位置 */
   mapChart.on('georoam', function () {
-    mapChart.setOption({ graphic: scsOverlayGraphics() });
+    mapChart.setOption({ graphic: scsOverlayGraphics().concat(cityOverlayGraphics()) });
   });
 
   function renderChips() {
@@ -624,7 +650,8 @@
       return m ? m[1] + '-' + m[2] : '2026-01';
     }
     var groups = [], seen = {};
-    provOnly.slice().sort(function (a, b) {
+    /* 「对接中」的客户（如深圳交通）尚未接入，没有接入时间，不进时间轴 */
+    provOnly.filter(function (c) { return c.start !== '对接中'; }).slice().sort(function (a, b) {
       var sa = sinceOf(a.start), sb = sinceOf(b.start);
       if (sa !== sb) return sa < sb ? -1 : 1;
       if (a.start !== b.start) return a.start < b.start ? -1 : 1;
