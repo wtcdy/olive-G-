@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>G端动态事件接入看板 · 截至 2026-10-18</title>
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div>
+      <h1>G端动态事件接入看板</h1>
+      <div class="sub">
+        数据区间 <b>2026-01-01 ~ 2026-10-18</b>（291 天）｜ 归档表 <code>rtt_events_2026</code> 取 status=0 ｜ 在线表 <code>rtt_events_online</code> 取 status=0/1 ｜ 共 <b>18</b> 个客户（含道研中心）
+      </div>
+    </div>
+    <div class="hdr-actions">
+      <span class="badge ok">数据已核实</span>
+      <span class="badge">9 月 14 日前为归档数据</span>
+      <button class="btn" id="btnCsv">导出客户月度明细 CSV</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- 数据异常预警 -->
+  <section class="card alert-card" id="alertPanel" style="margin-bottom:16px;"></section>
+
+  <!-- KPI -->
+  <section class="grid g5" id="kpiRow" style="margin-bottom:16px;"></section>
+
+  <!-- 地图 + 状态构成 -->
+  <section class="grid g3" style="margin-bottom:16px;">
+    <div class="card">
+      <div class="card-hd">
+        <span>全国省级客户接入状态</span>
+        <div class="toggle" id="mapToggle">
+          <button data-mode="status" class="on">接入状态</button>
+          <button data-mode="volume">事件量</button>
+        </div>
+      </div>
+      <div class="card-sub">按接入状态着色，共 31 个省级行政区（不含港澳台）。点击下方图例可筛选高亮，未选中任何图例时显示全国。</div>
+      <div class="legend-chips" id="mapChips"></div>
+      <div id="map" style="height:680px;margin-top:20px;margin-bottom:6px;"></div>
+      <div class="card-sub" id="mapFoot"></div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <div class="card-hd"><span>接入状态构成</span><span class="muted">按省份数</span></div>
+        <div id="donut" style="height:220px;"></div>
+        <div id="statusLegend" class="pad"></div>
+      </div>
+      <div class="card flex1">
+        <div class="card-hd"><span>各地接入时间</span><span class="muted">17 家客户</span></div>
+        <div class="card-sub">按接入年月归组，同月接入合并展示。右侧为「该月新增 / 累计」。事件量分布见下方横向条形图。</div>
+        <div id="timeline" class="tl-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 客户分布 + 道研中心对比 -->
+  <section class="grid g3r" style="margin-bottom:16px;">
+    <div class="card">
+      <div class="card-hd"><span>客户事件量分布</span><span class="muted">省级 / 城市客户</span></div>
+      <div class="card-sub">按 2026 年累计降序。横轴采用<b>对数刻度</b>（与折线图的「对数」模式同思路），避免浙江一家把其余 16 家压成一条线；条形右侧为真实条数与占比。</div>
+      <div id="barCust" style="height:470px;"></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><span>道研中心 vs 省级客户</span></div>
+      <div class="card-sub">部级客户体量对比</div>
+      <div id="donutCmp" style="height:290px;"></div>
+      <div id="cmpFoot" class="pad"></div>
+    </div>
+  </section>
+
+  <!-- 月度趋势合并图 -->
+  <section class="card" style="margin-bottom:16px;">
+    <div class="card-hd"><span>道研中心 · 省级客户 · 客户事件总数 月度趋势</span><span class="muted">单纵轴 · 同一量级</span></div>
+    <div class="card-sub">三条线共用同一纵轴（0–72 万条），量级可直接比较：客户事件总数 = 省级 / 城市客户合计 + 道研中心。</div>
+    <div id="lineCmp" style="height:440px;"></div>
+    <div class="callout" id="cmpNote"></div>
+  </section>
+
+  <!-- 省级客户月度趋势 -->
+  <section class="card" style="margin-bottom:16px;">
+    <div class="card-hd">
+      <span>省级客户月度趋势</span>
+      <div style="display:flex;gap:8px;">
+        <div class="toggle" id="scopeToggle">
+          <button data-scope="top6" class="on">TOP6</button>
+          <button data-scope="all">全部</button>
+        </div>
+        <div class="toggle" id="scaleToggle">
+          <button data-scale="linear" class="on">线性</button>
+          <button data-scale="log">对数</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-sub">接入前无数据（折线断开），不代表业务量下滑。</div>
+    <div id="lineTrend" style="height:440px;"></div>
+    <div class="callout" id="trendNote"></div>
+  </section>
+
+  <!-- 客户月度明细矩阵 -->
+  <section class="card" style="margin-bottom:16px;">
+    <div class="card-hd">
+      <span>客户月度明细矩阵</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span id="matrixChip" class="chip" style="display:none;"></span>
+        <span class="muted" id="matrixCount"></span>
+      </div>
+    </div>
+    <div class="card-sub">点击表头排序；点击地图省份可筛选该省客户。8 月、9 月均为完整自然月（8 月 = 8/1–8/14 前序系统 + 8/15–8/31 归档实测；9 月 = 9/1–9/14 归档 + 9/15–9/30 在线）；10 月 = 10/1–10/18，<b>非完整月</b>（仅 18 天，不可与完整月直接比高低）。道研中心 10 个月全部为实测 / 公示精确值，<b>无估算</b>。</div>
+    <div class="table-wrap">
+      <table id="matrixTable">
+        <thead><tr id="matrixHead"></tr></thead>
+        <tbody id="matrixBody"></tbody>
+        <tfoot id="matrixFoot"></tfoot>
+      </table>
+    </div>
+  </section>
+
+  <section class="card notes">
+    <h2>数据说明</h2>
+    <ul id="noteList"></ul>
+  </section>
+
+  <footer>
+    数据源：Omega · its.rtt_events_2026 / its.rtt_events_online（直查）｜ 地图使用国内官方行政区划边界数据本地渲染，未调用任何境外地图服务。
+  </footer>
+</main>
+
+<script src="./echarts.min.js"></script>
+<script src="./china.slim.js"></script>
+<script src="./data.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
