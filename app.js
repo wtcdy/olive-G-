@@ -313,18 +313,67 @@
   var mapMode = 'status';
   var chipSel = {};           // 被选中的接入状态
 
-  /* 南海诸岛附图：尺寸与位置（画布右下角、太平洋空白处，不压任何省份）。
-     宽度跟随画布高度收缩，避免窄屏下主图变矮后附图顶到东北。 */
+  /* 南海诸岛附图：位置固定在右下角太平洋空白处，不压任何省份。
+     尺寸与主图**等比联动**——主图按可用高度适配，附图宽度就取可用高度的 17.5%，
+     窗口放大 / 缩小时两者同向变化，附图相对主图的占比保持不变。
+     附图内部用 aspectScale = 1（真实经纬跨度），与国家标准地图的南海诸岛附图一致。 */
   var SCS_BB = geomBBox(SPLIT.scs);
-  var SCS_ASPECT = (SCS_BB.y1 - SCS_BB.y0) / ((SCS_BB.x1 - SCS_BB.x0) * 0.78);   // 高 / 宽
-  var SCS_W_MAX = 116;
+  var SCS_ASPECT = (SCS_BB.y1 - SCS_BB.y0) / (SCS_BB.x1 - SCS_BB.x0);   // 高 / 宽
+  var SCS_RATIO = 0.175;      // 附图宽度 / 主图可用高度
+  var SCS_W_MIN = 72;
+  var SCS_W_MAX = 128;
   var SCS_RIGHT = 14;
-  var SCS_BOTTOM = 34;
+  var SCS_BOTTOM = 32;
   function scsSize() {
     var el = document.getElementById('map');
     var h = (el && el.clientHeight) || MAP_MAX_H;
-    var w = Math.round(Math.min(SCS_W_MAX, Math.max(64, h * 0.17)));
+    var avail = Math.max(240, h - MAP_PAD_V);
+    var w = Math.round(Math.min(SCS_W_MAX, Math.max(SCS_W_MIN, avail * SCS_RATIO)));
     return { w: w, h: Math.round(w * SCS_ASPECT) };
+  }
+
+  /* 附图内的岛礁名称：先给经纬度，渲染时换算成附图框内的像素位置，随附图等比缩放。
+     统一左对齐（textAlign: 'left'），锚点即文字左边界，不受文字包围盒宽度影响。 */
+  var SCS_LABELS = [
+    { t: '东沙群岛', lon: 117.2, lat: 21.4 },
+    { t: '西沙群岛', lon: 109.0, lat: 14.2 },
+    { t: '中沙群岛', lon: 114.9, lat: 13.6 },
+    { t: '南沙群岛', lon: 108.8, lat: 10.6 },
+    { t: '曾母暗沙', lon: 108.9, lat: 5.6 }
+  ];
+
+  /* 把岛礁名称的经纬度换算成附图框内的画布像素坐标（left/top），随附图尺寸一起变 */
+  function scsLabelGraphics(SCS) {
+    var el = document.getElementById('map');
+    var cw = (mapChart.getWidth && mapChart.getWidth()) || (el && el.clientWidth) || 900;
+    var chh = (mapChart.getHeight && mapChart.getHeight()) || (el && el.clientHeight) || MAP_MAX_H;
+    var boxL = cw - SCS_RIGHT - SCS.w;
+    var boxT = chh - SCS_BOTTOM - SCS.h;
+    var fs = Math.max(8, Math.round(SCS.w * 0.078));
+    return SCS_LABELS.map(function (L) {
+      var fx = (L.lon - SCS_BB.x0) / (SCS_BB.x1 - SCS_BB.x0);
+      var fy = (SCS_BB.y1 - L.lat) / (SCS_BB.y1 - SCS_BB.y0);
+      return {
+        type: 'text', z: 6, silent: true,
+        left: Math.round(boxL + fx * SCS.w),
+        top: Math.round(boxT + fy * SCS.h),
+        style: {
+          text: L.t, fill: '#475569',
+          font: fs + 'px "PingFang SC", "Microsoft YaHei", sans-serif',
+          textAlign: 'left', textVerticalAlign: 'middle'
+        }
+      };
+    });
+  }
+
+  /* 颜色加深 / 提亮：附图里的岛礁只有 1–2px，浅色填充在白底上看不清，
+     用同色加深保持与图例一致，同时把细线与小岛压出可见的实心块。 */
+  function shade(hex, k) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex || '')) return hex;
+    var n = parseInt(hex.slice(1), 16);
+    function f(v) { return Math.max(0, Math.min(255, Math.round(v * (1 + k)))); }
+    var r = f((n >> 16) & 255), g = f((n >> 8) & 255), b = f(n & 255);
+    return '#' + [r, g, b].map(function (v) { return ('0' + v.toString(16)).slice(-2); }).join('');
   }
 
   var VOL_PIECES = [
@@ -439,10 +488,10 @@
         /* 南海诸岛附图：固定放在右下角太平洋空白处，不参与 roam / 筛选 / tooltip */
         type: 'map', map: 'rttNanhai', silent: true, z: 5,
         right: SCS_RIGHT, bottom: SCS_BOTTOM, width: SCS.w, height: SCS.h,
-        aspectScale: 0.78, selectedMode: false,
-        /* 附图里的岛礁大多只有 1–2px，白色描边会把填充吃掉、显得发灰，
-           所以描边取与填充同色，让岛礁与九段线呈实心点/线。 */
-        itemStyle: { areaColor: scsColor(), borderColor: scsColor(), borderWidth: 0.3 },
+        aspectScale: 1, selectedMode: false,
+        /* 附图里的岛礁大多只有 1–2px，白色的细描边会把填充吃掉、显得发灰，
+           这里用同色加深 + 零描边，让九段线与岛礁呈实心深色块，缩小/放大都看得清。 */
+        itemStyle: { areaColor: shade(scsColor(), -0.28), borderColor: shade(scsColor(), -0.28), borderWidth: 0 },
         label: { show: false },
         emphasis: { disabled: true },
         data: []
@@ -451,12 +500,12 @@
         type: 'rect', z: 4, silent: true,
         right: SCS_RIGHT, bottom: SCS_BOTTOM,
         shape: { width: SCS.w, height: SCS.h },
-        style: { fill: '#f8fafc', stroke: '#cbd5e1', lineWidth: 1, lineDash: [3, 3] }
+        style: { fill: '#f8fafc', stroke: '#94a3b8', lineWidth: 1, lineDash: [4, 3] }
       }, {
         type: 'text', z: 6, silent: true,
-        right: SCS_RIGHT, bottom: 6,
-        style: { text: '南海诸岛', fill: '#64748b', font: '11px "PingFang SC", sans-serif', textAlign: 'right' }
-      }]
+        right: SCS_RIGHT, bottom: 9,
+        style: { text: '南海诸岛', fill: '#475569', font: '600 12px "PingFang SC", sans-serif', textAlign: 'right' }
+      }].concat(scsLabelGraphics(SCS))
     };
     if (mapMode === 'volume') {
       opt.series[0].itemStyle = { borderColor: '#ffffff', borderWidth: 0.7 };
