@@ -230,14 +230,73 @@
       if (t) f.properties.cp = t;
     });
   }
-  echarts.registerMap('china', window.CHINA_GEO);
+
+  /* ---------- 主图 / 南海诸岛附图拆分 ----------
+     原始边界数据把「南海诸岛」和海南省管辖的 132 个岛礁多边形一起放在地图里，
+     包围盒被拉到 3.4°N，主图只能缩到很小，那些岛礁又只有 1–2px，几乎看不见。
+     这里做两件事：
+       1) 主图：海南省只保留海南岛本岛，其余岛礁与「南海诸岛」要素全部摘出；
+       2) 附图：把摘出的岛礁合成一张独立的南海诸岛图，放大后画在右下角，配虚线框与「南海诸岛」标注。
+     国家版图完整性不受影响——岛礁仍然全部绘制，只是改成了标准附图的表达方式。 */
+  function geomBBox(geo) {
+    var b = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+    function walk(c) {
+      if (typeof c[0] === 'number') {
+        if (c[0] < b.x0) b.x0 = c[0];
+        if (c[0] > b.x1) b.x1 = c[0];
+        if (c[1] < b.y0) b.y0 = c[1];
+        if (c[1] > b.y1) b.y1 = c[1];
+      } else { c.forEach(walk); }
+    }
+    (geo.features || []).forEach(function (f) { walk(f.geometry.coordinates); });
+    return b;
+  }
+
+  var SPLIT = (function (geo) {
+    var main = { type: 'FeatureCollection', features: [] };
+    var islands = [];                       // 统一收拢所有南海岛礁多边形
+    (geo.features || []).forEach(function (f) {
+      var nm = f.properties && f.properties.name;
+      if (nm === '南海诸岛') {
+        islands = islands.concat(f.geometry.coordinates);
+        return;
+      }
+      if (nm !== '海南省') { main.features.push(f); return; }
+      var keep = [], out = [];
+      (f.geometry.coordinates || []).forEach(function (poly) {
+        var minLat = 90;
+        (poly[0] || []).forEach(function (pt) { if (pt[1] < minLat) minLat = pt[1]; });
+        (minLat >= 17.5 ? keep : out).push(poly);
+      });
+      islands = islands.concat(out);
+      main.features.push({
+        type: 'Feature', properties: f.properties,
+        geometry: { type: 'MultiPolygon', coordinates: keep }
+      });
+    });
+    var scs = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature', properties: { name: '南海诸岛' },
+        geometry: { type: 'MultiPolygon', coordinates: islands }
+      }]
+    };
+    return { main: main, scs: scs };
+  })(window.CHINA_GEO);
+
+  /* 注册名必须避开 ECharts 内置的 'china'：
+     内置 china 地图自带 specialAreas（把九段线摆进经度 126–132°、纬度 18–25° 的示意框），
+     用同名 registerMap 覆写后这个隐形 region 仍会保留，在附图左侧多画出一片「幽灵」轮廓。
+     换成自定义名后 region 数与 geoJSON 要素数严格一致（34 = 34）。 */
+  echarts.registerMap('rttMain', SPLIT.main);
+  echarts.registerMap('rttNanhai', SPLIT.scs);
 
   /* ---------- 地图自适应尺寸 ----------
-     含南海诸岛后，地图包围盒（73.5°E–135.1°E / 3.4°N–53.6°N，aspectScale 0.78）
-     的宽高比恒为 0.958（宽/高），ECharts 是按「高度」来适配的：
-     宽度不足时地图会被两侧裁掉（表现为遮挡 / 出界）。
-     这里按容器宽度反推安全高度：宽 ≤ 650px 上限，窄屏自动降高，保证任何宽度都不裁切。 */
-  var MAP_WHR = 0.958;        // 地图宽 / 高（固定）
+     ECharts 地图按「高度」适配，宽度不足时两侧会被裁掉（表现为遮挡 / 出界）。
+     主图宽高比由实际包围盒算出（拆掉南海诸岛后约 1.36），
+     再按容器宽度反推安全高度：桌面端上限 680px，窄屏自动降高，保证任何宽度都不裁切。 */
+  var MAP_BB = geomBBox(SPLIT.main);
+  var MAP_WHR = ((MAP_BB.x1 - MAP_BB.x0) * 0.78) / (MAP_BB.y1 - MAP_BB.y0);
   var MAP_MAX_H = 680;        // 桌面端最大高度（原 560）
   var MAP_PAD_V = 12;         // top + bottom
   var MAP_PAD_H = 8;          // 左右各留 4px 余量
@@ -253,6 +312,20 @@
   var mapChart = echarts.init(document.getElementById('map'));
   var mapMode = 'status';
   var chipSel = {};           // 被选中的接入状态
+
+  /* 南海诸岛附图：尺寸与位置（画布右下角、太平洋空白处，不压任何省份）。
+     宽度跟随画布高度收缩，避免窄屏下主图变矮后附图顶到东北。 */
+  var SCS_BB = geomBBox(SPLIT.scs);
+  var SCS_ASPECT = (SCS_BB.y1 - SCS_BB.y0) / ((SCS_BB.x1 - SCS_BB.x0) * 0.78);   // 高 / 宽
+  var SCS_W_MAX = 116;
+  var SCS_RIGHT = 14;
+  var SCS_BOTTOM = 34;
+  function scsSize() {
+    var el = document.getElementById('map');
+    var h = (el && el.clientHeight) || MAP_MAX_H;
+    var w = Math.round(Math.min(SCS_W_MAX, Math.max(64, h * 0.17)));
+    return { w: w, h: Math.round(w * SCS_ASPECT) };
+  }
 
   var VOL_PIECES = [
     { min: 200000, label: '≥ 20 万', color: '#0b3a8c' },
@@ -293,33 +366,47 @@
       .replace(/省$/, '').replace(/市$/, '');
   }
 
+  var HAINAN = D.provinces.filter(function (p) { return p.geoName === '海南省'; })[0];
+
   function mapData() {
-    return D.provinces.map(function (p) {
+    var items = D.provinces.map(function (p) {
       var v = volOf(p);
       var item = { name: p.geoName, value: p.status === 'online' || v > 0 ? v : 0, _p: p };
       var base = (mapMode === 'status') ? D.STATUS_META[p.status].color : volColor(v);
       var on = activeGeo(p);
       var color = on ? base : '#f1f5f9';
       item.itemStyle = { areaColor: color };
-      if (p.status !== 'blank' || mapMode === 'volume') {
-        if (on && (mapMode === 'volume' ? v > 0 : p.status !== 'blank')) {
-          var lc = labelColor(color);
-          item.label = {
-            show: true, color: lc, fontSize: 11, fontWeight: 600,
-            formatter: function (pa) { return shortProv(pa.name); },
-            textShadowColor: lc === '#ffffff' ? 'rgba(0,0,0,.5)' : 'rgba(255,255,255,.85)', textShadowBlur: 3
-          };
-        }
+      /* 状态模式下所有省份都显示简称（含「空白」的西藏）；事件量模式下只标有数据的省份 */
+      if (on && (mapMode === 'status' || v > 0)) {
+        var lc = labelColor(color);
+        item.label = {
+          show: true, color: lc, fontSize: 11, fontWeight: 600,
+          formatter: function (pa) { return shortProv(pa.name); },
+          textShadowColor: lc === '#ffffff' ? 'rgba(0,0,0,.5)' : 'rgba(255,255,255,.85)', textShadowBlur: 3
+        };
       }
       return item;
     });
+    return items;
+  }
+
+  /* 南海诸岛附图配色：归海南省管辖，随海南当前的接入状态走 */
+  function scsColor() {
+    if (!HAINAN) return C_NO;
+    if (!activeGeo(HAINAN)) return '#f1f5f9';
+    return (mapMode === 'status') ? D.STATUS_META[HAINAN.status].color : C_NO;
   }
 
   function renderMap() {
+    var SCS = scsSize();
     var opt = {
       tooltip: Object.assign({}, TIP, {
         trigger: 'item',
         formatter: function (pa) {
+          if (pa.name === '南海诸岛') {
+            return '<div class="tt-h">南海诸岛 <span class="tt-dim">· 隶属海南省</span></div>' +
+              '<div class="tt-n">东沙、西沙、中沙、南沙诸岛礁，随海南省一并表示，不单独计入客户统计。</div>';
+          }
           var p = byGeo[pa.name];
           if (!p) return pa.name;
           var st = D.STATUS_META[p.status];
@@ -336,7 +423,7 @@
         }
       }),
       series: [{
-        type: 'map', map: 'china', roam: true, zoom: 1, top: 8, bottom: 4,
+        type: 'map', map: 'rttMain', roam: true, zoom: 1, top: 8, bottom: 4,
         aspectScale: 0.78, selectedMode: false,
         itemStyle: { areaColor: C_NO, borderColor: '#ffffff', borderWidth: 0.7 },
         emphasis: {
@@ -348,12 +435,34 @@
         },
         label: { show: false, formatter: function (pa) { return shortProv(pa.name); } },
         data: mapData()
+      }, {
+        /* 南海诸岛附图：固定放在右下角太平洋空白处，不参与 roam / 筛选 / tooltip */
+        type: 'map', map: 'rttNanhai', silent: true, z: 5,
+        right: SCS_RIGHT, bottom: SCS_BOTTOM, width: SCS.w, height: SCS.h,
+        aspectScale: 0.78, selectedMode: false,
+        /* 附图里的岛礁大多只有 1–2px，白色描边会把填充吃掉、显得发灰，
+           所以描边取与填充同色，让岛礁与九段线呈实心点/线。 */
+        itemStyle: { areaColor: scsColor(), borderColor: scsColor(), borderWidth: 0.3 },
+        label: { show: false },
+        emphasis: { disabled: true },
+        data: []
+      }],
+      graphic: [{
+        type: 'rect', z: 4, silent: true,
+        right: SCS_RIGHT, bottom: SCS_BOTTOM,
+        shape: { width: SCS.w, height: SCS.h },
+        style: { fill: '#f8fafc', stroke: '#cbd5e1', lineWidth: 1, lineDash: [3, 3] }
+      }, {
+        type: 'text', z: 6, silent: true,
+        right: SCS_RIGHT, bottom: 6,
+        style: { text: '南海诸岛', fill: '#64748b', font: '11px "PingFang SC", sans-serif', textAlign: 'right' }
       }]
     };
     if (mapMode === 'volume') {
       opt.series[0].itemStyle = { borderColor: '#ffffff', borderWidth: 0.7 };
       opt.visualMap = {
-        type: 'piecewise', pieces: VOL_PIECES, left: 16, bottom: 10, orient: 'horizontal',
+        type: 'piecewise', pieces: VOL_PIECES, seriesIndex: 0,
+        left: 16, bottom: 10, orient: 'horizontal',
         itemWidth: 14, itemHeight: 10, itemGap: 6, textStyle: { fontSize: 11, color: '#475569' }
       };
     }
@@ -804,6 +913,7 @@
 
   window.addEventListener('resize', function () {
     fitMapHeight();
+    renderMap();          // 附图尺寸随画布高度联动
     mapChart.resize(); donut.resize(); barCust.resize(); donutCmp.resize(); lineCmp.resize(); lineTrend.resize();
   });
 })();
