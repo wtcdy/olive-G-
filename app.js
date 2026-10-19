@@ -231,14 +231,15 @@
     });
   }
 
-  /* ---------- 主图 / 南海诸岛附图拆分 ----------
+  /* ---------- 南海诸岛内嵌（specialAreas 方案）----------
      原始边界数据把「南海诸岛」和海南省管辖的 132 个岛礁多边形一起放在地图里，
      包围盒被拉到 3.4°N，主图只能缩到很小，那些岛礁又只有 1–2px，几乎看不见。
-     这里做两件事：
-       1) 主图：海南省只保留海南岛本岛，其余岛礁与「南海诸岛」要素全部摘出；
-       2) 附图：把摘出的岛礁合成一张独立的南海诸岛图，放大后画在右下角，配虚线框与「南海诸岛」标注。
-     国家版图完整性不受影响——岛礁仍然全部绘制，只是改成了标准附图的表达方式。 */
-  function geomBBox(geo) {
+     国家标准地图的做法是：岛礁照画，但把这一块「搬」到右下角的示意框里。
+     ECharts 的 specialAreas 正是干这个的——把指定 region 的包围盒
+     非均匀重映射到 geo 坐标矩形 {left, top, width, height}（top 是纬度、height 向北延伸）。
+     这样九段线与岛礁是**同一 series 的一个 region**，不是另外画的一张图：
+     随主图缩放、平移、窗口变化天然联动，不需要任何手工同步。 */
+  function geomBBox(geo, skipName) {
     var b = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
     function walk(c) {
       if (typeof c[0] === 'number') {
@@ -248,13 +249,16 @@
         if (c[1] > b.y1) b.y1 = c[1];
       } else { c.forEach(walk); }
     }
-    (geo.features || []).forEach(function (f) { walk(f.geometry.coordinates); });
+    (geo.features || []).forEach(function (f) {
+      if (skipName && f.properties && f.properties.name === skipName) return;
+      walk(f.geometry.coordinates);
+    });
     return b;
   }
 
   var SPLIT = (function (geo) {
     var main = { type: 'FeatureCollection', features: [] };
-    var islands = [];                       // 统一收拢所有南海岛礁多边形
+    var islands = [];                       // 统一收拢所有南海岛礁多边形（含九段线环）
     (geo.features || []).forEach(function (f) {
       var nm = f.properties && f.properties.name;
       if (nm === '南海诸岛') {
@@ -274,28 +278,44 @@
         geometry: { type: 'MultiPolygon', coordinates: keep }
       });
     });
-    var scs = {
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature', properties: { name: '南海诸岛' },
-        geometry: { type: 'MultiPolygon', coordinates: islands }
-      }]
-    };
-    return { main: main, scs: scs };
+    /* 岛礁合成一个 feature 回到主图里，由 specialAreas 搬到右下角示意框 */
+    main.features.push({
+      type: 'Feature', properties: { name: '南海诸岛' },
+      geometry: { type: 'MultiPolygon', coordinates: islands }
+    });
+    return { main: main, islands: islands };
   })(window.CHINA_GEO);
+
+  /* 示意框的 geo 位置：放在台湾以东的太平洋空白处（经度 126.2–132.8、纬度 18.6 起），
+     高度按岛礁真实宽高比换算，配合 aspectScale 0.78 落到屏幕上仍是等比无变形。 */
+  var SCS_BB = (function () {
+    var b = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+    function walk(c) {
+      if (typeof c[0] === 'number') {
+        if (c[0] < b.x0) b.x0 = c[0];
+        if (c[0] > b.x1) b.x1 = c[0];
+        if (c[1] < b.y0) b.y0 = c[1];
+        if (c[1] > b.y1) b.y1 = c[1];
+      } else { c.forEach(walk); }
+    }
+    SPLIT.islands.forEach(walk);
+    return b;
+  })();
+  var SCS_W = 6.6;                                          // 示意框 geo 宽度（经度跨度）
+  var SCS_H = +(SCS_W * (SCS_BB.y1 - SCS_BB.y0) / (SCS_BB.x1 - SCS_BB.x0)).toFixed(2);
+  var SCS_AREA = { left: 126.2, top: 18.6, width: SCS_W, height: SCS_H };
 
   /* 注册名必须避开 ECharts 内置的 'china'：
      内置 china 地图自带 specialAreas（把九段线摆进经度 126–132°、纬度 18–25° 的示意框），
      用同名 registerMap 覆写后这个隐形 region 仍会保留，在附图左侧多画出一片「幽灵」轮廓。
-     换成自定义名后 region 数与 geoJSON 要素数严格一致（34 = 34）。 */
-  echarts.registerMap('rttMain', SPLIT.main);
-  echarts.registerMap('rttNanhai', SPLIT.scs);
+     换成自定义名后 region 数与 geoJSON 要素数严格一致（35 = 35）。 */
+  echarts.registerMap('rttMain', SPLIT.main, SCS_AREA ? { '南海诸岛': SCS_AREA } : undefined);
 
   /* ---------- 地图自适应尺寸 ----------
      ECharts 地图按「高度」适配，宽度不足时两侧会被裁掉（表现为遮挡 / 出界）。
      主图宽高比由实际包围盒算出（拆掉南海诸岛后约 1.36），
      再按容器宽度反推安全高度：桌面端上限 680px，窄屏自动降高，保证任何宽度都不裁切。 */
-  var MAP_BB = geomBBox(SPLIT.main);
+  var MAP_BB = geomBBox(SPLIT.main, '南海诸岛');   // 排除岛礁要素，避免 3.4°N 拉高估算高度
   var MAP_WHR = ((MAP_BB.x1 - MAP_BB.x0) * 0.78) / (MAP_BB.y1 - MAP_BB.y0);
   var MAP_MAX_H = 680;        // 桌面端最大高度（原 560）
   var MAP_PAD_V = 12;         // top + bottom
@@ -313,26 +333,22 @@
   var mapMode = 'status';
   var chipSel = {};           // 被选中的接入状态
 
-  /* 南海诸岛附图：位置固定在右下角太平洋空白处，不压任何省份。
-     尺寸与主图**等比联动**——主图按可用高度适配，附图宽度就取可用高度的 17.5%，
-     窗口放大 / 缩小时两者同向变化，附图相对主图的占比保持不变。
-     附图内部用 aspectScale = 1（真实经纬跨度），与国家标准地图的南海诸岛附图一致。 */
-  var SCS_BB = geomBBox(SPLIT.scs);
-  var SCS_ASPECT = (SCS_BB.y1 - SCS_BB.y0) / (SCS_BB.x1 - SCS_BB.x0);   // 高 / 宽
-  var SCS_RATIO = 0.175;      // 附图宽度 / 主图可用高度
-  var SCS_W_MIN = 72;
-  var SCS_W_MAX = 128;
-  var SCS_RIGHT = 14;
-  var SCS_BOTTOM = 32;
-  function scsSize() {
-    var el = document.getElementById('map');
-    var h = (el && el.clientHeight) || MAP_MAX_H;
-    var avail = Math.max(240, h - MAP_PAD_V);
-    var w = Math.round(Math.min(SCS_W_MAX, Math.max(SCS_W_MIN, avail * SCS_RATIO)));
-    return { w: w, h: Math.round(w * SCS_ASPECT) };
+  /* 示意框 / 标注的画布定位：框的四个角就是 specialAreas 矩形的角，
+     用 convertToPixel 反算成像素——主图多大、框就多大，天然等比联动。
+     框内的岛礁坐标被 specialAreas 线性重映射到矩形里，所以标注按
+     「岛礁包围盒内的比例」线性内插即可精确落位。 */
+  function scsBoxPx() {
+    if (!mapChart.convertToPixel) return null;
+    var p1 = mapChart.convertToPixel({ seriesIndex: 0 }, [SCS_AREA.left, SCS_AREA.top]);
+    var p2 = mapChart.convertToPixel({ seriesIndex: 0 }, [SCS_AREA.left + SCS_AREA.width, SCS_AREA.top + SCS_AREA.height]);
+    if (!p1 || !p2 || isNaN(p1[0]) || isNaN(p2[0])) return null;
+    return {
+      x0: Math.min(p1[0], p2[0]), y0: Math.min(p1[1], p2[1]),
+      x1: Math.max(p1[0], p2[0]), y1: Math.max(p1[1], p2[1])
+    };
   }
 
-  /* 附图内的岛礁名称：先给经纬度，渲染时换算成附图框内的像素位置，随附图等比缩放。
+  /* 附图内的岛礁名称：先给经纬度，渲染时换算成示意框内的像素位置，随框等比缩放。
      统一左对齐（textAlign: 'left'），锚点即文字左边界，不受文字包围盒宽度影响。 */
   var SCS_LABELS = [
     { t: '东沙群岛', lon: 117.2, lat: 21.4 },
@@ -342,28 +358,37 @@
     { t: '曾母暗沙', lon: 108.9, lat: 5.6 }
   ];
 
-  /* 把岛礁名称的经纬度换算成附图框内的画布像素坐标（left/top），随附图尺寸一起变 */
-  function scsLabelGraphics(SCS) {
-    var el = document.getElementById('map');
-    var cw = (mapChart.getWidth && mapChart.getWidth()) || (el && el.clientWidth) || 900;
-    var chh = (mapChart.getHeight && mapChart.getHeight()) || (el && el.clientHeight) || MAP_MAX_H;
-    var boxL = cw - SCS_RIGHT - SCS.w;
-    var boxT = chh - SCS_BOTTOM - SCS.h;
-    var fs = Math.max(8, Math.round(SCS.w * 0.078));
-    return SCS_LABELS.map(function (L) {
+  /* 虚线示意框 + 「南海诸岛」标题 + 岛礁名称，全部随主图联动 */
+  function scsOverlayGraphics() {
+    var bx = scsBoxPx();
+    if (!bx) return [];
+    var bw = bx.x1 - bx.x0, bh = bx.y1 - bx.y0;
+    var fs = Math.max(8, Math.round(bw * 0.078));
+    var g = [{
+      type: 'rect', z: 1, silent: true,
+      left: bx.x0, top: bx.y0,
+      shape: { width: bw, height: bh },
+      style: { fill: '#f8fafc', stroke: '#94a3b8', lineWidth: 1, lineDash: [4, 3] }
+    }, {
+      type: 'text', z: 6, silent: true,
+      right: ((mapChart.getWidth && mapChart.getWidth()) || 900) - bx.x1, top: bx.y1 + 5,
+      style: { text: '南海诸岛', fill: '#475569', font: '600 ' + fs + 'px "PingFang SC", "Microsoft YaHei", sans-serif', textAlign: 'right' }
+    }];
+    SCS_LABELS.forEach(function (L) {
       var fx = (L.lon - SCS_BB.x0) / (SCS_BB.x1 - SCS_BB.x0);
       var fy = (SCS_BB.y1 - L.lat) / (SCS_BB.y1 - SCS_BB.y0);
-      return {
+      g.push({
         type: 'text', z: 6, silent: true,
-        left: Math.round(boxL + fx * SCS.w),
-        top: Math.round(boxT + fy * SCS.h),
+        left: Math.round(bx.x0 + fx * bw),
+        top: Math.round(bx.y0 + fy * bh),
         style: {
           text: L.t, fill: '#475569',
           font: fs + 'px "PingFang SC", "Microsoft YaHei", sans-serif',
           textAlign: 'left', textVerticalAlign: 'middle'
         }
-      };
+      });
     });
+    return g;
   }
 
   /* 颜色加深 / 提亮：附图里的岛礁只有 1–2px，浅色填充在白底上看不清，
@@ -436,6 +461,17 @@
       }
       return item;
     });
+    /* 南海诸岛是主图 series 里的一个 region：随海南省的接入状态着色（同色加深）。
+       事件量模式下 visualMap 会覆盖 data item 的显式颜色，用 value = -1（不落任何区间）
+       + visualMap.outOfRange 指定加深色，保证岛礁在白底示意框里始终清晰。 */
+    var scsBase = shade(scsColor(), -0.28);
+    items.push({
+      name: '南海诸岛',
+      value: mapMode === 'volume' ? -1 : 0,
+      itemStyle: { areaColor: scsBase, borderColor: scsBase, borderWidth: 0 },
+      label: { show: false },
+      emphasis: { label: { show: false } }
+    });
     return items;
   }
 
@@ -447,7 +483,6 @@
   }
 
   function renderMap() {
-    var SCS = scsSize();
     var opt = {
       tooltip: Object.assign({}, TIP, {
         trigger: 'item',
@@ -484,39 +519,28 @@
         },
         label: { show: false, formatter: function (pa) { return shortProv(pa.name); } },
         data: mapData()
-      }, {
-        /* 南海诸岛附图：固定放在右下角太平洋空白处，不参与 roam / 筛选 / tooltip */
-        type: 'map', map: 'rttNanhai', silent: true, z: 5,
-        right: SCS_RIGHT, bottom: SCS_BOTTOM, width: SCS.w, height: SCS.h,
-        aspectScale: 1, selectedMode: false,
-        /* 附图里的岛礁大多只有 1–2px，白色的细描边会把填充吃掉、显得发灰，
-           这里用同色加深 + 零描边，让九段线与岛礁呈实心深色块，缩小/放大都看得清。 */
-        itemStyle: { areaColor: shade(scsColor(), -0.28), borderColor: shade(scsColor(), -0.28), borderWidth: 0 },
-        label: { show: false },
-        emphasis: { disabled: true },
-        data: []
       }],
-      graphic: [{
-        type: 'rect', z: 4, silent: true,
-        right: SCS_RIGHT, bottom: SCS_BOTTOM,
-        shape: { width: SCS.w, height: SCS.h },
-        style: { fill: '#f8fafc', stroke: '#94a3b8', lineWidth: 1, lineDash: [4, 3] }
-      }, {
-        type: 'text', z: 6, silent: true,
-        right: SCS_RIGHT, bottom: 9,
-        style: { text: '南海诸岛', fill: '#475569', font: '600 12px "PingFang SC", sans-serif', textAlign: 'right' }
-      }].concat(scsLabelGraphics(SCS))
+      graphic: scsOverlayGraphics()
     };
     if (mapMode === 'volume') {
       opt.series[0].itemStyle = { borderColor: '#ffffff', borderWidth: 0.7 };
       opt.visualMap = {
         type: 'piecewise', pieces: VOL_PIECES, seriesIndex: 0,
+        outOfRange: { color: shade(scsColor(), -0.28) },   // 南海诸岛 value=-1 专属色
         left: 16, bottom: 10, orient: 'horizontal',
         itemWidth: 14, itemHeight: 10, itemGap: 6, textStyle: { fontSize: 11, color: '#475569' }
       };
     }
     mapChart.setOption(opt, true);
+    /* 首次渲染时坐标系尚未建立、convertToPixel 拿不到值，setOption 之后再刷一次覆盖层 */
+    var ov = scsOverlayGraphics();
+    if (ov.length) mapChart.setOption({ graphic: ov });
   }
+
+  /* 拖拽 / 缩放主图后，示意框与标注跟着 geo 坐标重新反算像素位置 */
+  mapChart.on('georoam', function () {
+    mapChart.setOption({ graphic: scsOverlayGraphics() });
+  });
 
   function renderChips() {
     var el = document.getElementById('mapChips');
