@@ -51,7 +51,7 @@ window.RTT_DATA = {
     { name: '广西', geoName: '广西壮族自治区', status: 'negotiating', customers: '—' },
     { name: '广东', geoName: '广东省', status: 'negotiating', customers: '深圳交通（对接中）' },
     { name: '宁夏', geoName: '宁夏回族自治区', status: 'negotiating', customers: '—' },
-    { name: '湖北', geoName: '湖北省', status: 'notConnected', customers: '—' },
+    { name: '湖北', geoName: '湖北省', status: 'negotiating', customers: '—' },
     { name: '河南', geoName: '河南省', status: 'notConnected', customers: '—' },
     { name: '江苏', geoName: '江苏省', status: 'negotiating', customers: '—' },
     { name: '云南', geoName: '云南省', status: 'notConnected', customers: '—' },
