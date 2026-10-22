@@ -59,7 +59,7 @@
   var grandMonthly = [];
   for (var gi = 0; gi < N; gi++) grandMonthly.push(monthlyTotal[gi] + INST.monthly[gi]);
 
-  /* ---------- 数据异常预警（双周窗口，仅看本期，不回溯） ---------- */
+  /* ---------- 数据异常预警（单周窗口，仅看本期，不回溯） ---------- */
   var ALC = D.alert;
   function median(a) {
     var s = a.slice().sort(function (x, y) { return x - y; });
@@ -128,12 +128,12 @@
       '<span class="alert-win">日级窗口 ' + winShort + ' · 仅看本期，不回溯</span>' +
       '</div>';
 
-    var footTxt = '日级规则（仅 ' + covered + ' 家省级 / 城市客户，不含道研中心）：① 最近 3 天连续为 0；② 最近 3 天均低于本期「平时日均」的 50%' +
-      '（平时日均取本期前 ' + (ALC && ALC.customers && ALC.customers[0] ? Math.max(1, ALC.customers[0].daily.length - 3) : 11) +
+    var footTxt = '日级规则（仅 ' + covered + ' 家省级 / 城市客户，不含道研中心）：① 最近 3 天连续为 0；② 最近 3 天每天都低于本期「平时日均」的 50%' +
+      '（平时日均取本期前 ' + (ALC && ALC.customers && ALC.customers[0] ? Math.max(1, ALC.customers[0].daily.length - 3) : 4) +
       ' 天的中位数，< 20 条/天不参与规则②）。' +
       '月度规则（仅道研中心）：最新完整自然月对比<b>往前 ' + (IAL ? IAL.baseWindow : 6) + ' 个完整月的中位数</b>，' +
       '≤ ' + Math.round((IAL ? IAL.alertRatio : 0.7) * 100) + '% 预警、≤ ' + Math.round((IAL ? IAL.watchRatio : 0.85) * 100) + '% 关注；非完整月不参与判定。' +
-      '数据按双周更新，历史数据不参与本期判定。';
+      '数据每周一 08:00 更新上一自然周，历史数据不参与本期判定。';
 
     var body;
     if (!alerts.length && !instIssue) {
