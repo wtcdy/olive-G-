@@ -59,8 +59,14 @@
   var grandMonthly = [];
   for (var gi = 0; gi < N; gi++) grandMonthly.push(monthlyTotal[gi] + INST.monthly[gi]);
 
-  /* ---------- 数据异常预警（单周窗口，仅看本期，不回溯） ---------- */
+  /* ---------- 数据异常预警（展示按单周，判定按滚动 14 天，仅看本期，不回溯） ----------
+   * ALC = alert        ：展示窗口，本期单周（周一 ~ 周日，7 天），用于卡片上的周期表述
+   * DET = alertDetect  ：检测窗口，滚动 14 天，只用于判定
+   * 两者解耦的原因：单周窗口会把跨边界的短断流切碎（陕西 10-17~10-19 连续三天为 0，
+   * 被本期与下期两个窗口各自切成 2 天和 1 天，两边都判定不了）。 */
   var ALC = D.alert;
+  var DET = D.alertDetect || D.alert;
+  var DET_DAYS = (DET && DET.days) || [];
   function median(a) {
     var s = a.slice().sort(function (x, y) { return x - y; });
     if (!s.length) return 0;
@@ -68,24 +74,53 @@
     return (s.length % 2) ? s[m] : (s[m - 1] + s[m]) / 2;
   }
 
+  /* 找出窗口内所有「连续 ≥3 天为 0」的区段（不再要求落在窗口末尾） */
+  function zeroRuns(d) {
+    var runs = [], i = 0;
+    while (i < d.length) {
+      if (d[i] === 0) {
+        var j = i;
+        while (j + 1 < d.length && d[j + 1] === 0) j++;
+        if (j - i + 1 >= 3) runs.push({ from: i, to: j, span: j - i + 1 });
+        i = j + 1;
+      } else i++;
+    }
+    return runs;
+  }
+
   var alerts = [];
-  if (ALC && ALC.customers) {
-    ALC.customers.forEach(function (row) {
+  if (DET && DET.customers) {
+    DET.customers.forEach(function (row) {
       var d = row.daily || [];
       if (d.length < 5) return;
+      var runs = zeroRuns(d);
+      if (runs.length) {
+        var r = runs[runs.length - 1];                 // 取最近一段
+        var after = r.to < d.length - 1 ? d.slice(r.to + 1) : [];
+        /* 「已恢复」要求段后每天都 > 0：吉林 10-16~10-18 断流后只有 10-19 的 1 条、
+           10-20/10-21 又归零，这种「闪一条又断」不能算恢复。 */
+        var recovered = after.length > 0 && after.every(function (v) { return v > 0; });
+        alerts.push({
+          name: row.name, kind: 'zero',
+          span: r.span,
+          segFrom: DET_DAYS[r.from] || '', segTo: DET_DAYS[r.to] || '',
+          recovered: recovered,
+          after: after,
+          runs: runs.length,
+          win: d.length
+        });
+        return;                                        // 命中①不再判②
+      }
       var last3 = d.slice(-3);
-      var base = median(d.slice(0, -3));   // 本期「平时」水平（不含最后 3 天）
-      if (last3.every(function (v) { return v === 0; })) {
-        var z = 0;
-        for (var i = d.length - 1; i >= 0; i--) { if (d[i] === 0) z++; else break; }
-        alerts.push({ name: row.name, kind: 'zero', last3: last3, base: base, span: z, win: d.length });
-      } else if (base >= 20 && last3.every(function (v) { return v < base * 0.5; })) {
+      var base = median(d.slice(0, -3));               // 本期「平时」水平（不含最后 3 天）
+      if (base >= 20 && last3.every(function (v) { return v < base * 0.5; })) {
         alerts.push({ name: row.name, kind: 'low', last3: last3, base: base, span: 3, win: d.length });
       }
     });
   }
   alerts.sort(function (a, b) {
     if (a.kind !== b.kind) return a.kind === 'zero' ? -1 : 1;
+    if (a.kind === 'zero' && a.recovered !== b.recovered) return a.recovered ? 1 : -1;  // 未恢复的排前面
     return b.span - a.span;
   });
 
@@ -120,20 +155,25 @@
     var el = document.getElementById('alertPanel');
     if (!el) return;
     var win = (ALC && ALC.window) || { from: '', to: '' };
+    var dwin = (DET && DET.window) || win;
     var covered = (ALC && ALC.customers) ? ALC.customers.length : 0;
-    var winShort = win.from.slice(5) + '～' + win.to.slice(5);   // 10-05～10-18
+    var winShort = win.from.slice(5) + '～' + win.to.slice(5);     // 10-12～10-18（本期单周，展示口径）
+    var dWinShort = dwin.from.slice(5) + '～' + dwin.to.slice(5);  // 10-08～10-21（滚动 14 天，检测口径）
 
     var head = '<div class="alert-hd">' +
       '<span class="alert-title"><i class="alert-dot"></i>数据异常预警</span>' +
-      '<span class="alert-win">日级窗口 ' + winShort + ' · 仅看本期，不回溯</span>' +
+      '<span class="alert-win">展示周期 ' + winShort + '（本周） · 检测范围 滚动 ' +
+      ((DET && DET.customers && DET.customers[0]) ? DET.customers[0].daily.length : 14) +
+      ' 天 ' + dWinShort + ' · 仅看本期，不回溯</span>' +
       '</div>';
 
-    var footTxt = '日级规则（仅 ' + covered + ' 家省级 / 城市客户，不含道研中心）：① 最近 3 天连续为 0；② 最近 3 天每天都低于本期「平时日均」的 50%' +
-      '（平时日均取本期前 ' + (ALC && ALC.customers && ALC.customers[0] ? Math.max(1, ALC.customers[0].daily.length - 3) : 4) +
+    var footTxt = '日级规则（仅 ' + covered + ' 家省级 / 城市客户，不含道研中心）：① 检测窗口内出现<b>任意一段连续 ≥3 天为 0</b>即判断流' +
+      '（不再要求落在窗口末尾，避免跨周断流被切碎），并标明该段是否已恢复；② 最近 3 天每天都低于本期「平时日均」的 50%' +
+      '（平时日均取检测窗口前 ' + (DET && DET.customers && DET.customers[0] ? Math.max(1, DET.customers[0].daily.length - 3) : 11) +
       ' 天的中位数，< 20 条/天不参与规则②）。' +
       '月度规则（仅道研中心）：最新完整自然月对比<b>往前 ' + (IAL ? IAL.baseWindow : 6) + ' 个完整月的中位数</b>，' +
       '≤ ' + Math.round((IAL ? IAL.alertRatio : 0.7) * 100) + '% 预警、≤ ' + Math.round((IAL ? IAL.watchRatio : 0.85) * 100) + '% 关注；非完整月不参与判定。' +
-      '数据每周一 08:00 更新上一自然周，历史数据不参与本期判定。';
+      '数据每周一 08:00 更新上一自然周；<b>判定用滚动 14 天、展示按单周</b>，历史数据不参与本期判定。';
 
     var body;
     if (!alerts.length && !instIssue) {
@@ -143,23 +183,29 @@
     } else {
       el.className = 'card alert-card';
       var rows = alerts.map(function (a) {
-        var tag = a.kind === 'zero' ? '断流' : '量级异常';
-        var detail, extra;
+        var tag, detail, extra, cls = '';
         if (a.kind === 'zero') {
-          detail = a.span >= a.win
-            ? '本期 ' + a.win + ' 天<b>全部为 0</b>'
-            : '最近 <b>' + a.span + '</b> 天连续为 0';
-          extra = '最后 3 天：' + a.last3.join(' / ');
+          tag = a.recovered ? '断流·已恢复' : '断流';
+          cls = a.recovered ? ' low' : '';
+          detail = '<b>' + a.segFrom + '～' + a.segTo + '</b> 连续 <b>' + a.span + '</b> 天为 0' +
+            (a.runs > 1 ? '（窗口内共 ' + a.runs + ' 段）' : '');
+          extra = a.recovered
+            ? '已恢复，其后各日：' + a.after.join(' / ') + ' 条'
+            : (a.after.length
+              ? '其后各日：' + a.after.join(' / ') + ' 条，<b>仍未恢复</b>'
+              : '至检测窗口末日<b>仍未恢复</b>');
         } else {
+          tag = '量级异常';
+          cls = ' low';
           var avg3 = (a.last3[0] + a.last3[1] + a.last3[2]) / 3;
           detail = '最近 3 天日均 <b>' + Math.round(avg3) + '</b>，低于本期平时日均 ' + Math.round(a.base) + ' 的 50%';
           extra = '最后 3 天：' + a.last3.join(' / ');
         }
-        return '<div class="alert-item' + (a.kind === 'low' ? ' low' : '') + '">' +
+        return '<div class="alert-item' + cls + '">' +
           '<span class="alert-tag">' + tag + '</span>' +
           '<span class="an">' + a.name + '</span>' +
           '<span class="ad">' + detail + '</span>' +
-          '<span class="ab">' + extra + '（' + winShort + '）</span>' +
+          '<span class="ab">' + extra + '（检测 ' + dWinShort + '）</span>' +
           '</div>';
       }).join('');
 
