@@ -74,6 +74,21 @@
     return (s.length % 2) ? s[m] : (s[m - 1] + s[m]) / 2;
   }
 
+  /* 低频客户判定：取该客户最近 3 个「有数据」月份的日均（按月 30 天粗算），
+   * 最大值仍 < 20 条/天 → 属低频客户。
+   * 低频客户（如吉林高速，月日均约 1 条）零星归零不是断流，只是量级太小，
+   * 按用户要求单独归为「量级偏低·关注」，不进断流预警。 */
+  function lowVolumeCust(name) {
+    var c = null;
+    for (var i = 0; i < custs.length; i++) { if (custs[i].name === name) { c = custs[i]; break; } }
+    if (!c || !c.monthly) return false;
+    var vals = c.monthly.filter(function (v) { return v > 0; }).slice(-3);
+    if (!vals.length) return false;
+    var mx = 0;
+    vals.forEach(function (v) { mx = Math.max(mx, v / 30); });
+    return mx < 20;
+  }
+
   /* 找出窗口内所有「连续 ≥3 天为 0」的区段（不再要求落在窗口末尾） */
   function zeroRuns(d) {
     var runs = [], i = 0;
@@ -94,6 +109,17 @@
       var d = row.daily || [];
       if (d.length < 5) return;
       var runs = zeroRuns(d);
+      if (runs.length && lowVolumeCust(row.name)) {
+        /* 低频客户：零星归零不算断流，只提示「量级偏小、个别天无数据」 */
+        var zeroDays = 0, sum = 0;
+        d.forEach(function (v) { if (v === 0) zeroDays++; sum += v; });
+        alerts.push({
+          name: row.name, kind: 'lowvol',
+          zeroDays: zeroDays, avgAll: +(sum / d.length).toFixed(1),
+          span: runs[runs.length - 1].span, runs: runs.length, win: d.length
+        });
+        return;
+      }
       if (runs.length) {
         var r = runs[runs.length - 1];                 // 取最近一段
         var after = r.to < d.length - 1 ? d.slice(r.to + 1) : [];
@@ -118,9 +144,15 @@
       }
     });
   }
+  /* 严重度排序：断流(未恢复) > 断流(已恢复) > 量级异常 > 量级偏低·关注 */
+  function rank(a) {
+    if (a.kind === 'zero') return a.recovered ? 1 : 0;
+    if (a.kind === 'low') return 2;
+    return 3;                                          // lowvol
+  }
   alerts.sort(function (a, b) {
-    if (a.kind !== b.kind) return a.kind === 'zero' ? -1 : 1;
-    if (a.kind === 'zero' && a.recovered !== b.recovered) return a.recovered ? 1 : -1;  // 未恢复的排前面
+    var ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
     return b.span - a.span;
   });
 
@@ -169,6 +201,7 @@
 
     var footTxt = '日级规则（仅 ' + covered + ' 家省级 / 城市客户，不含道研中心）：① 检测窗口内出现<b>任意一段连续 ≥3 天为 0</b>即判断流' +
       '（不再要求落在窗口末尾，避免跨周断流被切碎），并标明该段是否已恢复；② 最近 3 天每天都低于本期「平时日均」的 50%' +
+      '——<b>低频客户（月日均 < 20 条）的零星归零不算断流</b>，只作「量级偏低·关注」；' +
       '（平时日均取检测窗口前 ' + (DET && DET.customers && DET.customers[0] ? Math.max(1, DET.customers[0].daily.length - 3) : 11) +
       ' 天的中位数，< 20 条/天不参与规则②）。' +
       '月度规则（仅道研中心）：最新完整自然月对比<b>往前 ' + (IAL ? IAL.baseWindow : 6) + ' 个完整月的中位数</b>，' +
@@ -194,6 +227,12 @@
             : (a.after.length
               ? '其后各日：' + a.after.join(' / ') + ' 条，<b>仍未恢复</b>'
               : '至检测窗口末日<b>仍未恢复</b>');
+        } else if (a.kind === 'lowvol') {
+          tag = '量级偏低·关注';
+          cls = ' low';
+          detail = '数据量级较小（日均约 <b>' + a.avgAll + '</b> 条），检测窗口 ' + a.win +
+            ' 天内有 <b>' + a.zeroDays + '</b> 天无数据';
+          extra = '低频客户，个别天无数据属正常波动，仅作关注，非断流';
         } else {
           tag = '量级异常';
           cls = ' low';
