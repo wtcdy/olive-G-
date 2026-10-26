@@ -123,8 +123,8 @@
       if (runs.length) {
         var r = runs[runs.length - 1];                 // 取最近一段
         var after = r.to < d.length - 1 ? d.slice(r.to + 1) : [];
-        /* 「已恢复」要求段后每天都 > 0：吉林 10-16~10-18 断流后只有 10-19 的 1 条、
-           10-20/10-21 又归零，这种「闪一条又断」不能算恢复。 */
+        /* 「已恢复」要求段后每天都 > 0：吉林 10-22 只有 2 条、10-23～10-25 又归零，
+           这种「闪一条又断」不能算恢复。 */
         var recovered = after.length > 0 && after.every(function (v) { return v > 0; });
         alerts.push({
           name: row.name, kind: 'zero',
@@ -189,8 +189,8 @@
     var win = (ALC && ALC.window) || { from: '', to: '' };
     var dwin = (DET && DET.window) || win;
     var covered = (ALC && ALC.customers) ? ALC.customers.length : 0;
-    var winShort = win.from.slice(5) + '～' + win.to.slice(5);     // 10-12～10-18（本期单周，展示口径）
-    var dWinShort = dwin.from.slice(5) + '～' + dwin.to.slice(5);  // 10-08～10-21（滚动 14 天，检测口径）
+    var winShort = win.from.slice(5) + '～' + win.to.slice(5);     // 10-19～10-25（本期单周，展示口径）
+    var dWinShort = dwin.from.slice(5) + '～' + dwin.to.slice(5);  // 10-12～10-25（滚动 14 天，检测口径）
 
     var head = '<div class="alert-hd">' +
       '<span class="alert-title"><i class="alert-dot"></i>数据异常预警</span>' +
@@ -903,10 +903,10 @@
   });
   document.getElementById('cmpNote').innerHTML =
     '<b>要点</b>：客户事件总数由 1 月 ' + fmt(grandMonthly[0]) + ' 条回落至 6 月 ' + fmt(grandMonthly[5]) + ' 条，7 月反弹至 ' + fmt(grandMonthly[6]) + ' 条，8 月起 ' +
-    fmt(grandMonthly[7]) + ' → ' + fmt(grandMonthly[8]) + ' → ' + fmt(grandMonthly[9]) + ' 条（10 月为 1–18 日）持续走低。' +
+    fmt(grandMonthly[7]) + ' → ' + fmt(grandMonthly[8]) + ' → ' + fmt(grandMonthly[9]) + ' 条（10 月为 1–25 日）持续走低。' +
     '结构上道研中心占比由 1 月的 <b>' + shareMax.toFixed(1) + '%</b> 降至 10 月的 <b>' + shareMin.toFixed(1) + '%</b>，' +
     '而省级 / 城市客户合计在 8 月创出全年新高 ' + fmt(monthlyTotal[7]) + ' 条，占比从不足 7% 提升至近四成——增量主要来自新客户接入。' +
-    '<span class="warn">口径：道研中心 10 个月全部为实测 / 公示精确值，<b>无估算</b>（2–8 月为归档表逐段实测，9–10 月为归档 + 在线实测）；10 月为 10/1–10/18 非完整月。</span>';
+    '<span class="warn">口径：道研中心 10 个月全部为实测 / 公示精确值，<b>无估算</b>（2–8 月为归档表逐段实测，9–10 月为归档 + 在线实测）；10 月为 10/1–10/25 非完整月。</span>';
 
   /* ---------- 省级客户月度趋势 ---------- */
   var lineTrend = echarts.init(document.getElementById('lineTrend'));
@@ -969,7 +969,7 @@
   document.getElementById('trendNote').innerHTML =
     '<b>接入时点</b>：成都高速 2/10、四川高速 4/19、北京高速 4/29、安徽高速 7/8、江西高速 7/21、上海交通 7/22、贵州高速 7/30、' +
     '山西高速 9/1、天津高速 9/10、山东高速 9 月。接入前无数据（折线断开），不代表业务量下滑。' +
-    '<span class="warn">重庆高速 9 月起断流、陕西高速 10/17 起归零，折线归零。</span>';
+    '<span class="warn">重庆高速 9 月起断流、<b>10/19 起已恢复</b>（112 / 155 / 190 条起，10 月累计 1,133 条）；陕西高速 10/17～10/19 连续 3 天归零，10/20 回灌 183 条后恢复至日均约 40 条。</span>';
 
   /* ---------- 客户月度明细矩阵 ---------- */
   var sortKey = 'total', sortDir = -1;
