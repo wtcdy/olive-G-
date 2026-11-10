@@ -231,8 +231,13 @@
           tag = '量级偏低·关注';
           cls = ' low';
           detail = '数据量级较小（日均约 <b>' + a.avgAll + '</b> 条），检测窗口 ' + a.win +
-            ' 天内有 <b>' + a.zeroDays + '</b> 天无数据';
-          extra = '低频客户，个别天无数据属正常波动，仅作关注，非断流';
+            ' 天内有 <b>' + a.zeroDays + '</b> 天无数据' +
+            (a.span >= 3 ? '，其中<b>连续 ' + a.span + ' 天</b>无数据' : '');
+          /* 低频客户的零星归零属正常波动；但连续多天静默已超出「零星」范畴，
+             提示核实接入状态，仍不升级为断流（保持规则一致，不改变判定口径）。 */
+          extra = a.span >= 5
+            ? '低频客户，连续静默已超出正常波动，建议核实接入状态，暂不判断流'
+            : '低频客户，个别天无数据属正常波动，仅作关注，非断流';
         } else {
           tag = '量级异常';
           cls = ' low';
@@ -907,7 +912,7 @@
     fmt(grandMonthly[7]) + ' → ' + fmt(grandMonthly[8]) + ' → ' + fmt(grandMonthly[9]) + ' 条，<b>10 月（完整月）与 9 月基本走平</b>，未再继续下探。' +
     '结构上道研中心占比由 1 月的 <b>' + shareMax.toFixed(1) + '%</b> 降至 ' + M[LAST_FULL] + ' 的 <b>' + instShare[LAST_FULL].toFixed(1) + '%</b>，' +
     '而省级 / 城市客户合计在 8 月创出全年新高 ' + fmt(monthlyTotal[7]) + ' 条后维持高位，' + M[LAST_FULL] + ' 达 ' + fmt(monthlyTotal[LAST_FULL]) + ' 条、占比 ' + (100 - instShare[LAST_FULL]).toFixed(1) + '%。' +
-    '<span class="warn">口径：道研中心 11 个月全部为实测 / 公示精确值，<b>无估算</b>（2–8 月为归档表逐段实测，9–10 月为归档 + 在线实测，10 月已为完整自然月，11 月仅 11/1 一天属非完整月）。</span>';
+    '<span class="warn">口径：道研中心 11 个月全部为实测 / 公示精确值，<b>无估算</b>（2–8 月为归档表逐段实测，9–10 月为归档 + 在线实测，10 月已为完整自然月，11 月为 11/1–11/8 共 8 天，属非完整月）。</span>';
 
   /* ---------- 省级客户月度趋势 ---------- */
   var lineTrend = echarts.init(document.getElementById('lineTrend'));
