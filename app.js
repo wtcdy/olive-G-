@@ -1102,6 +1102,14 @@
   renderTrend();
   renderMatrix();
 
+  /* 顶部「归档数据」徽标：跟随 HIST_CUTOFF / ONLINE_START 动态生成，不再写死 */
+  (function () {
+    var el = document.getElementById('archiveBadge');
+    if (!el) return;
+    function md(s) { var p = s.split('-'); return (+p[1]) + ' 月 ' + (+p[2]) + ' 日'; }
+    el.textContent = '归档数据覆盖至 ' + md(D.HIST_CUTOFF) + '，' + md(D.ONLINE_START) + '起为在线表';
+  })();
+
   window.addEventListener('resize', function () {
     fitMapHeight();
     renderMap();          // 附图尺寸随画布高度联动
