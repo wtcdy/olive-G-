@@ -1110,6 +1110,16 @@
     el.textContent = '归档数据覆盖至 ' + md(D.HIST_CUTOFF) + '，' + md(D.ONLINE_START) + '起为在线表';
   })();
 
+  /* 文档标题与页头数据区间：同样跟随 DATA_CUTOFF / COVER_DAYS 动态生成，避免每期手改残留旧日期 */
+  (function () {
+    document.title = 'G端动态事件接入看板 · 截至 ' + D.DATA_CUTOFF;
+    var el = document.getElementById('rangeSub');
+    if (!el) return;
+    el.innerHTML = '数据区间 <b>2026-01-01 ~ ' + D.DATA_CUTOFF + '</b>（' + D.COVER_DAYS +
+      ' 天）｜ 归档表 <code>rtt_events_2026</code> 取 status=0 ｜ 在线表 <code>rtt_events_online</code> 取 status=0/1 ｜ 共 <b>' +
+      (D.customers.filter(function (c) { return sum(c.monthly) > 0; }).length + 1) + '</b> 个客户（含道研中心）';
+  })();
+
   window.addEventListener('resize', function () {
     fitMapHeight();
     renderMap();          // 附图尺寸随画布高度联动
