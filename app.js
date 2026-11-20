@@ -740,17 +740,24 @@
       return m ? m[1] + '-' + m[2] : '2026-01';
     }
     var groups = [], seen = {};
+    function pushTo(c) {
+      var k = sinceOf(c.start);
+      if (!seen[k]) { seen[k] = { ym: k, list: [] }; groups.push(seen[k]); }
+      seen[k].list.push(c);
+    }
     /* 「对接中」的客户（如深圳交通）尚未接入，没有接入时间，不进时间轴 */
     provOnly.filter(function (c) { return c.start !== '对接中'; }).slice().sort(function (a, b) {
       var sa = sinceOf(a.start), sb = sinceOf(b.start);
       if (sa !== sb) return sa < sb ? -1 : 1;
       if (a.start !== b.start) return a.start < b.start ? -1 : 1;
       return b.total - a.total;
-    }).forEach(function (c) {
-      var k = sinceOf(c.start);
-      if (!seen[k]) { seen[k] = { ym: k, list: [] }; groups.push(seen[k]); }
-      seen[k].list.push(c);
+    }).forEach(pushTo);
+
+    /* 新增数据源（不等于新客户）：单独成条并在标签上标（new），不计入客户数 */
+    (D.timelineExtra || []).forEach(function (x) {
+      pushTo({ name: x.name, start: x.start, total: x.total, note: x.note, isExtra: true });
     });
+    groups.sort(function (a, b) { return a.ym < b.ym ? -1 : (a.ym > b.ym ? 1 : 0); });
 
     var cum = 0;
     el.innerHTML = groups.map(function (g) {
@@ -759,7 +766,8 @@
       return '<div class="tl-row' + (fresh ? ' fresh' : '') + '">' +
         '<div class="tl-date">' + g.ym.replace('-', '.') + '</div>' +
         '<div class="tl-body">' + g.list.map(function (c) {
-          return '<span class="tl-chip" title="' + c.start + ' · ' + fmt(c.total) + ' 条">' + c.name + '</span>';
+          var tip = c.isExtra ? (c.start + ' · ' + (c.note || '')) : (c.start + ' · ' + fmt(c.total) + ' 条');
+          return '<span class="tl-chip' + (c.isExtra ? ' new' : '') + '" title="' + tip + '">' + c.name + '</span>';
         }).join('') + '</div>' +
         '<div class="tl-n">+' + g.list.length + '<i>/' + cum + '</i></div>' +
         '</div>';

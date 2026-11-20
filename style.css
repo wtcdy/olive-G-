@@ -174,3 +174,7 @@ tfoot tr.grand-foot td { background: #eef3fb; color: #1e3a8a; font-weight: 700; 
 .notes ul { margin: 0; padding-left: 18px; }
 .notes li { font-size: 13px; color: #475569; line-height: 1.8; }
 footer { color: #94a3b8; font-size: 12px; text-align: center; padding: 24px 0 8px; }
+
+/* 时间轴：新增数据源（非新客户）用描边样式区分 */
+.tl-chip.new { background: #fff; border: 1px dashed #2f5597; color: #2f5597; }
+.tl-row.fresh .tl-chip.new { background: #fff; border-color: #2f5597; color: #17417f; }
