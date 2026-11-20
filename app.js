@@ -33,7 +33,7 @@
   /* ---------- 派生数据 ---------- */
   var custs = D.customers.map(function (c) {
     var t = sum(c.monthly);
-    return { name: c.name, kind: c.kind, province: c.province, start: c.start, note: c.note, monthly: c.monthly, total: t };
+    return { name: c.name, kind: c.kind, province: c.province, start: c.start, note: c.note, tlMuted: c.tlMuted, monthly: c.monthly, total: t };
   }).sort(function (a, b) { return b.total - a.total; });
 
   var provTotal = sum(custs.map(function (c) { return c.total; }));
@@ -753,7 +753,7 @@
       return b.total - a.total;
     }).forEach(pushTo);
 
-    /* 新增数据源（不等于新客户）：单独成条并在标签上标（new），不计入客户数 */
+    /* 新增数据源（不等于新客户）：单独成条，不计入客户数；样式与其他客户一致，说明放在悬停提示里 */
     (D.timelineExtra || []).forEach(function (x) {
       pushTo({ name: x.name, start: x.start, total: x.total, note: x.note, isExtra: true });
     });
@@ -767,7 +767,7 @@
         '<div class="tl-date">' + g.ym.replace('-', '.') + '</div>' +
         '<div class="tl-body">' + g.list.map(function (c) {
           var tip = c.isExtra ? (c.start + ' · ' + (c.note || '')) : (c.start + ' · ' + fmt(c.total) + ' 条');
-          return '<span class="tl-chip' + (c.isExtra ? ' new' : '') + '" title="' + tip + '">' + c.name + '</span>';
+          return '<span class="tl-chip' + (c.tlMuted ? ' old' : '') + '" title="' + tip + '">' + c.name + '</span>';
         }).join('') + '</div>' +
         '<div class="tl-n">+' + g.list.length + '<i>/' + cum + '</i></div>' +
         '</div>';
